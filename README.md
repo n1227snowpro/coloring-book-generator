@@ -1,5 +1,7 @@
 # 🎨 Coloring Book Generator
 
+**Live:** https://coloringbook.srv1213330.hstgr.cloud (Docker container on the Hostinger box, behind Traefik)
+
 Generates a unique, print-ready KDP coloring book **interior** PDF from a single
 theme, using Google's Gemini API (`gemini-3.1-flash-image`, aka "Nano Banana")
 for the line art. No title page, "belongs to" page, copyright page, or bonus
@@ -91,18 +93,33 @@ Streams the finished PDF.
 
 ---
 
-## Deployment (Hostinger / any Docker host)
+## Deployment (Hostinger)
+
+Deployed at `/opt/coloring-book-generator` on the Hostinger box (`72.62.121.91`,
+alias `hostinger-books` in `~/.ssh/config` on this Mac, key
+`~/.ssh/coloring_book_deploy_ed25519`), following the same
+`docker-compose.yml` + Traefik-label pattern as the other Docker apps on that
+server (`cheap-ticket`, `audiobook-generator`, `pdf-cover-converter`).
+Routed via the `n8n_default` Traefik network, TLS auto-issued by
+`mytlschallenge`, DNS is a wildcard (`*.srv1213330.hstgr.cloud`).
+
+To redeploy after a code change:
 
 ```bash
-docker build -t coloring-book-generator .
-docker run -p 5000:5000 --env-file .env coloring-book-generator
+ssh hostinger-books "cd /opt/coloring-book-generator && git pull && docker compose up -d --build"
 ```
 
-Deploy the image behind Nginx/whatever reverse proxy you already use for the
-other tools on this server, same as `book-generator-web`. Note: inside the
-container, generated files live at the container's home directory rather than
-this Mac's `~/Library/Application Support`; mount a volume there if you need
-jobs/output to survive container restarts.
+`docker-compose.yml` sets `DATA_DIR=/app/data` (a named volume,
+`coloring_book_data`) so job state/output PDFs survive container restarts —
+`app.py` falls back to this Mac's `~/Library/Application Support` path when
+`DATA_DIR` isn't set (i.e. when run locally).
+
+`GEMINI_API_KEY` lives in `/opt/coloring-book-generator/.env` on the server
+(gitignored, not in the repo) — update it there directly if the key rotates:
+
+```bash
+ssh hostinger-books "nano /opt/coloring-book-generator/.env && cd /opt/coloring-book-generator && docker compose up -d"
+```
 
 `gunicorn` is configured with `--workers 1 --threads 4` — job state lives in
 one process (SQLite + in-memory thread), so don't scale to multiple workers
