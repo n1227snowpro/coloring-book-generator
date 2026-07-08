@@ -25,9 +25,10 @@
   }
   label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; margin-top: 14px; }
   label:first-child { margin-top: 0; }
-  input[type=text], input[type=number], select {
+  input[type=text], input[type=number], select, textarea {
     width: 100%; background: var(--surface2); border: 1px solid var(--border);
     color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 0.9rem;
+    font-family: inherit; resize: vertical;
   }
   .row { display: flex; gap: 16px; }
   .row > div { flex: 1; }
@@ -56,6 +57,9 @@
     <form id="job-form">
       <label for="theme">Theme</label>
       <input type="text" id="theme" name="theme" placeholder="e.g. mandalas, ocean animals, flowers" required />
+
+      <label for="style">Style (optional)</label>
+      <textarea id="style" name="style" rows="2" placeholder="e.g. thick bold outlines, whimsical kawaii style, no fine detail — leave blank for default clean line art. Applied to every page so the book looks consistent."></textarea>
 
       <div class="row">
         <div>
@@ -132,6 +136,7 @@ form.addEventListener('submit', async (e) => {
   const numDesigns = numDesignsSel.value === 'custom' ? customCount.value : numDesignsSel.value;
   const fd = new FormData();
   fd.append('theme', document.getElementById('theme').value);
+  fd.append('style', document.getElementById('style').value);
   fd.append('num_designs', numDesigns);
   fd.append('page_size', document.getElementById('page_size').value);
 

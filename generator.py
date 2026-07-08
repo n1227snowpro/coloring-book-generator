@@ -9,11 +9,15 @@ from google import genai
 from google.genai import types
 from PIL import Image
 
+DEFAULT_STYLE = (
+    "Bold clean black outlines only, no shading, no gray fill, high contrast."
+)
+
 STYLE_TEMPLATE = (
     "Black and white line art coloring book page, {subject}. "
-    "Bold clean black outlines only, no shading, no gray fill, no color, "
-    "pure white background, high contrast, print-ready, centered composition, "
-    "suitable for an adult coloring book."
+    "{style} "
+    "Pure white background, no color, no text or lettering, print-ready, "
+    "centered composition, suitable for an adult coloring book."
 )
 
 
@@ -90,9 +94,9 @@ class ColoringPageGenerator:
         except Exception:
             return f"{theme} design variation {len(existing_phrases) + 1}"
 
-    def generate_image(self, subject, aspect_ratio="3:4", retries=3):
+    def generate_image(self, subject, style=None, aspect_ratio="3:4", retries=3):
         """Generate one coloring-page image for the given subject phrase. Returns a PIL.Image."""
-        prompt = STYLE_TEMPLATE.format(subject=subject)
+        prompt = STYLE_TEMPLATE.format(subject=subject, style=(style or DEFAULT_STYLE).strip())
         last_err = None
         for attempt in range(1, retries + 1):
             try:

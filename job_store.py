@@ -24,6 +24,7 @@ class JobStore:
                 CREATE TABLE IF NOT EXISTS jobs (
                     id TEXT PRIMARY KEY,
                     theme TEXT NOT NULL,
+                    style TEXT NOT NULL DEFAULT '',
                     num_designs INTEGER NOT NULL,
                     page_size TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'queued',
@@ -36,15 +37,18 @@ class JobStore:
                 )
                 """
             )
+            existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+            if "style" not in existing_cols:
+                conn.execute("ALTER TABLE jobs ADD COLUMN style TEXT NOT NULL DEFAULT ''")
             conn.commit()
 
-    def create_job(self, theme, num_designs, page_size):
+    def create_job(self, theme, num_designs, page_size, style=""):
         job_id = uuid.uuid4().hex[:12]
         with _connect(self.db_path) as conn:
             conn.execute(
-                """INSERT INTO jobs (id, theme, num_designs, page_size, status, total, created_at)
-                   VALUES (?, ?, ?, ?, 'queued', ?, ?)""",
-                (job_id, theme, num_designs, page_size, num_designs, time.time()),
+                """INSERT INTO jobs (id, theme, style, num_designs, page_size, status, total, created_at)
+                   VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)""",
+                (job_id, theme, style, num_designs, page_size, num_designs, time.time()),
             )
             conn.commit()
         return job_id

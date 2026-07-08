@@ -66,13 +66,14 @@ def _run_job(job_id):
 
         store.update_job(job_id, status="generating")
         aspect_ratio = closest_aspect_ratio(job["page_size"])
+        style = job["style"]
         design_images = []
         for i, phrase in enumerate(phrases):
             try:
-                image = generator.generate_image(phrase, aspect_ratio=aspect_ratio)
+                image = generator.generate_image(phrase, style=style, aspect_ratio=aspect_ratio)
             except GenerationError:
                 fresh_phrase = generator.generate_single_variation(job["theme"], phrases[: i + 1])
-                image = generator.generate_image(fresh_phrase, aspect_ratio=aspect_ratio)
+                image = generator.generate_image(fresh_phrase, style=style, aspect_ratio=aspect_ratio)
 
             thumb_name = f"{i:03d}.png"
             image.convert("RGB").save(job_thumbs_dir / thumb_name)
@@ -103,6 +104,8 @@ def create_job():
     if not theme:
         return jsonify({"error": "theme is required"}), 400
 
+    style = (request.form.get("style") or "").strip()
+
     try:
         num_designs = int(request.form.get("num_designs", 50))
     except ValueError:
@@ -114,7 +117,7 @@ def create_job():
     if page_size not in PAGE_SIZES:
         return jsonify({"error": f"page_size must be one of {list(PAGE_SIZES.keys())}"}), 400
 
-    job_id = store.create_job(theme, num_designs, page_size)
+    job_id = store.create_job(theme, num_designs, page_size, style=style)
     threading.Thread(target=_run_job, args=(job_id,), daemon=True).start()
 
     return jsonify({"job_id": job_id}), 202
