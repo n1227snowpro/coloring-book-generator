@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Coloring Book Generator</title>
+<style>
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --surface2: #22263a; --border: #2e3250;
+    --accent: #6c63ff; --accent2: #a78bfa; --text: #e8eaf6; --muted: #7c83a8;
+    --green: #4ade80; --red: #f87171; --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    min-height: 100vh; padding: 40px 20px;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  p.sub { color: var(--muted); font-size: 0.85rem; margin-bottom: 28px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 24px; margin-bottom: 20px;
+  }
+  label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; margin-top: 14px; }
+  label:first-child { margin-top: 0; }
+  input[type=text], input[type=number], select {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 0.9rem;
+  }
+  .row { display: flex; gap: 16px; }
+  .row > div { flex: 1; }
+  button {
+    margin-top: 20px; background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: white; border: none; padding: 12px 20px; border-radius: 8px;
+    font-size: 0.9rem; font-weight: 600; cursor: pointer; width: 100%;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .progress-wrap { display: none; }
+  .progress-bar-bg { background: var(--surface2); border-radius: 8px; height: 10px; overflow: hidden; margin-top: 10px; }
+  .progress-bar { background: var(--accent); height: 100%; width: 0%; transition: width 0.3s; }
+  .status-line { font-size: 0.8rem; color: var(--muted); margin-top: 8px; }
+  .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 8px; margin-top: 16px; }
+  .thumbs img { width: 100%; border-radius: 4px; border: 1px solid var(--border); background: white; }
+  .download-btn { display: none; text-align: center; text-decoration: none; }
+  .error { color: var(--red); font-size: 0.85rem; margin-top: 10px; display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🎨 Coloring Book Generator</h1>
+  <p class="sub">Generate a unique KDP-ready coloring book interior (line art only, no title/bonus pages) from a theme.</p>
+
+  <div class="card">
+    <form id="job-form">
+      <label for="theme">Theme</label>
+      <input type="text" id="theme" name="theme" placeholder="e.g. mandalas, ocean animals, flowers" required />
+
+      <div class="row">
+        <div>
+          <label for="num_designs">Unique designs</label>
+          <select id="num_designs" name="num_designs">
+            <option value="50" selected>50 (100 pages)</option>
+            <option value="100">100 (200 pages)</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+        <div>
+          <label for="page_size">Page size</label>
+          <select id="page_size" name="page_size">
+            {% for size in page_sizes %}
+            <option value="{{ size }}" {% if size == '8.5x11' %}selected{% endif %}>{{ size }} in</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div id="custom-count-wrap" style="display:none">
+        <label for="custom_count">Custom design count (1-150)</label>
+        <input type="number" id="custom_count" min="1" max="150" value="50" />
+      </div>
+
+      <button type="submit" id="generate-btn">Generate</button>
+      <div class="error" id="error-box"></div>
+    </form>
+  </div>
+
+  <div class="card progress-wrap" id="progress-card">
+    <div class="status-line" id="status-text">Queued…</div>
+    <div class="progress-bar-bg"><div class="progress-bar" id="progress-bar"></div></div>
+    <div class="thumbs" id="thumbs"></div>
+    <a class="btn" href="#" id="download-link" download>
+      <button class="download-btn" id="download-btn" style="display:none">Download PDF</button>
+    </a>
+  </div>
+</main>
+
+<script>
+const form = document.getElementById('job-form');
+const numDesignsSel = document.getElementById('num_designs');
+const customWrap = document.getElementById('custom-count-wrap');
+const customCount = document.getElementById('custom_count');
+const generateBtn = document.getElementById('generate-btn');
+const progressCard = document.getElementById('progress-card');
+const statusText = document.getElementById('status-text');
+const progressBar = document.getElementById('progress-bar');
+const thumbsEl = document.getElementById('thumbs');
+const downloadBtn = document.getElementById('download-btn');
+const downloadLink = document.getElementById('download-link');
+const errorBox = document.getElementById('error-box');
+
+numDesignsSel.addEventListener('change', () => {
+  customWrap.style.display = numDesignsSel.value === 'custom' ? 'block' : 'none';
+});
+
+let pollTimer = null;
+const seenThumbs = new Set();
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorBox.style.display = 'none';
+  generateBtn.disabled = true;
+  progressCard.style.display = 'block';
+  thumbsEl.innerHTML = '';
+  seenThumbs.clear();
+  downloadBtn.style.display = 'none';
+  statusText.textContent = 'Queued…';
+  progressBar.style.width = '0%';
+
+  const numDesigns = numDesignsSel.value === 'custom' ? customCount.value : numDesignsSel.value;
+  const fd = new FormData();
+  fd.append('theme', document.getElementById('theme').value);
+  fd.append('num_designs', numDesigns);
+  fd.append('page_size', document.getElementById('page_size').value);
+
+  try {
+    const res = await fetch('/api/jobs', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to start job');
+    pollJob(data.job_id);
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+    generateBtn.disabled = false;
+  }
+});
+
+function pollJob(jobId) {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    const res = await fetch(`/api/jobs/${jobId}`);
+    const job = await res.json();
+
+    const pct = job.total ? Math.round((job.completed / job.total) * 100) : 0;
+    progressBar.style.width = pct + '%';
+    statusText.textContent = `${job.status} — ${job.completed} / ${job.total} designs`;
+
+    (job.thumbnail_urls || []).forEach(url => {
+      if (!seenThumbs.has(url)) {
+        seenThumbs.add(url);
+        const img = document.createElement('img');
+        img.src = url;
+        thumbsEl.appendChild(img);
+      }
+    });
+
+    if (job.status === 'done') {
+      clearInterval(pollTimer);
+      generateBtn.disabled = false;
+      downloadLink.href = job.download_url;
+      downloadBtn.style.display = 'block';
+    } else if (job.status === 'error') {
+      clearInterval(pollTimer);
+      generateBtn.disabled = false;
+      errorBox.textContent = job.error || 'Generation failed';
+      errorBox.style.display = 'block';
+    }
+  }, 3000);
+}
+</script>
+</body>
+</html>
