@@ -5,7 +5,7 @@ followed by a blank page (single-sided coloring format, no bleed-through).
 No title, "belongs to", copyright, or bonus pages are added.
 """
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
 # Standard KDP trim sizes in inches (width, height).
 PAGE_SIZES = {
@@ -17,7 +17,6 @@ PAGE_SIZES = {
 
 DPI = 300
 OUTSIDE_MARGIN_IN = 0.5  # top / bottom / outside edge — exceeds KDP's 0.25" minimum
-BORDER_WIDTH_PX = 3
 
 # KDP's required inside (gutter) margin grows with total page count, since more
 # pages means more of the inner margin disappears into the binding.
@@ -106,10 +105,4 @@ def _build_design_page(design, page_w, page_h, margins_px):
     offset_y = top_px + (inner_h - new_h) // 2
     page.paste(resized, (offset_x, offset_y))
 
-    draw = ImageDraw.Draw(page)
-    draw.rectangle(
-        [left_px, top_px, page_w - right_px, page_h - bottom_px],
-        outline="black",
-        width=BORDER_WIDTH_PX,
-    )
     return page
