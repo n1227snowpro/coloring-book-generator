@@ -25,7 +25,12 @@ from generator import ColoringPageGenerator, GenerationError
 from job_store import JobStore
 from pdf_builder import PAGE_SIZES, build_interior_pdf, closest_aspect_ratio
 
-APP_SUPPORT_DIR = Path.home() / "Library" / "Application Support" / "ColoringBookGenerator"
+DATA_DIR_ENV = os.environ.get("DATA_DIR")
+APP_SUPPORT_DIR = (
+    Path(DATA_DIR_ENV)
+    if DATA_DIR_ENV
+    else Path.home() / "Library" / "Application Support" / "ColoringBookGenerator"
+)
 OUTPUT_DIR = APP_SUPPORT_DIR / "output"
 THUMBS_DIR = APP_SUPPORT_DIR / "thumbnails"
 DB_PATH = APP_SUPPORT_DIR / "jobs.db"

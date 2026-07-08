@@ -1,0 +1,36 @@
+services:
+  coloring-book-generator:
+    build: .
+    image: coloring-book-generator:latest
+    container_name: coloring-book-generator
+    restart: unless-stopped
+    networks:
+      - n8n_default
+    volumes:
+      - coloring_book_data:/app/data
+    environment:
+      DATA_DIR: /app/data
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_TEXT_MODEL: ${GEMINI_TEXT_MODEL:-gemini-2.5-flash}
+      GEMINI_IMAGE_MODEL: ${GEMINI_IMAGE_MODEL:-gemini-3.1-flash-image}
+      API_KEY: ${API_KEY:-}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.coloringbook.rule=Host(`coloringbook.srv1213330.hstgr.cloud`)
+      - traefik.http.routers.coloringbook.tls=true
+      - traefik.http.routers.coloringbook.entrypoints=web,websecure
+      - traefik.http.routers.coloringbook.tls.certresolver=mytlschallenge
+      - traefik.http.services.coloringbook.loadbalancer.server.port=5000
+      - traefik.http.middlewares.coloringbook-headers.headers.SSLRedirect=true
+      - traefik.http.middlewares.coloringbook-headers.headers.STSSeconds=315360000
+      - traefik.http.middlewares.coloringbook-headers.headers.forceSTSHeader=true
+      - traefik.http.routers.coloringbook.middlewares=coloringbook-headers@docker
+      - traefik.docker.network=n8n_default
+
+networks:
+  n8n_default:
+    external: true
+
+volumes:
+  coloring_book_data:
+    driver: local
