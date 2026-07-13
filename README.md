@@ -15,15 +15,25 @@ this Mac and hosted (Docker / Hostinger).
 
 ## How it works
 
-1. You give it a **theme** (e.g. "mandalas", "ocean animals") and a design
-   count (50 → 100 pages, 100 → 200 pages, or custom).
-2. Gemini text model generates that many distinct short subject phrases so
-   every page is a different design.
-3. Gemini image model (`gemini-3.1-flash-image`) turns each phrase into a
-   black-and-white line-art coloring page.
-4. Each design is framed on its own page with a thin border and followed by a
-   blank page; everything is assembled into one PDF at your chosen KDP trim
-   size (default 8.5×11in, 300 DPI).
+You give it a **topic** (what's depicted, e.g. "forest animals") and,
+optionally, a **theme** (mood/setting, e.g. "whimsical enchanted woodland")
+and a **style** (art rendering, e.g. "storybook illustration"). Topic drives
+what each page *shows*; theme and style are applied identically to *every*
+page so the whole book looks like one consistent product rather than a grab
+bag of unrelated images.
+
+1. Gemini text model generates N distinct short subject phrases from the
+   topic (+ theme context), so every page is a different composition.
+2. Gemini image model (`gemini-3.1-flash-image`) turns each phrase into a
+   black-and-white line-art coloring page, with the theme/style baked into
+   every single image call.
+3. Each design fills its own page (no drawn border — the generated art
+   already has its own frame) and is followed by a blank page; everything is
+   assembled into one PDF at your chosen trim size (default 8.5×11in, 300
+   DPI), with KDP-correct gutter margins that scale with page count.
+4. If you didn't supply a **title**, one is auto-generated from
+   topic/theme/keyword and written into the PDF's metadata (never rendered
+   on a page — there's still no title page in the book itself).
 
 Because Gemini's image output resolution is below 300 DPI print spec at these
 trim sizes, each design is upscaled (Lanczos) to fit the page. Line art holds
@@ -64,32 +74,100 @@ project folder.
 
 ## REST API
 
-### `POST /api/jobs`
+Base URL: `https://coloringbook.srv1213330.hstgr.cloud` (or `http://localhost:9003`
+locally). Every endpoint accepts an optional `X-API-Key: <API_KEY env var>`
+header — only enforced if you set `API_KEY` in `.env` (unset = open).
+
+### `POST /api/title` — optional, generate a title without starting a job
 
 `multipart/form-data`:
 
 | field | type | required | notes |
 |---|---|---|---|
-| `theme` | string | yes | e.g. `mandalas` |
-| `num_designs` | int | no (default 50) | 1-150; unique designs, PDF has 2× this many pages |
-| `page_size` | string | no (default `8.5x11`) | one of `8.25x11`, `8.5x11`, `6x9`, `5.5x8.5` |
+| `topic` | string | yes | e.g. `forest animals` |
+| `theme` | string | no | e.g. `whimsical enchanted woodland` |
+| `keyword` | string | no | e.g. `relaxing coloring for adults` |
 
-Optional header `X-API-Key: <API_KEY env var>` if you set one.
-
-Returns `202 { "job_id": "..." }`.
+Returns `200 { "title": "..." }` immediately (single fast text call, no job
+created). This is what the web UI's "Generate Title" button calls.
 
 ```bash
-curl -F theme=mandalas -F num_designs=4 http://localhost:9003/api/jobs
+curl -F topic="forest animals" -F theme="whimsical enchanted woodland" \
+     -F keyword="relaxing coloring for adults" \
+     https://coloringbook.srv1213330.hstgr.cloud/api/title
 ```
 
-### `GET /api/jobs/<job_id>`
+### `POST /api/jobs` — generate the book
 
-Returns job status, progress, thumbnail URLs, and (once done) a
-`download_url`.
+`multipart/form-data`:
 
-### `GET /api/jobs/<job_id>/download`
+| field | type | required | notes |
+|---|---|---|---|
+| `topic` | string | **yes** | Subject matter — what's depicted on each page. e.g. `forest animals` |
+| `keyword` | string | no | Marketing/audience context, e.g. `relaxing coloring for adults`. Folded into title generation and written to the PDF's Keywords metadata. Doesn't affect the art. |
+| `title` | string | no | Book title. If omitted, one is auto-generated (same logic as `/api/title`) and returned in the job status. Written to PDF metadata only — no title page is rendered. |
+| `theme` | string | no | Mood/setting, e.g. `whimsical enchanted woodland`. Applied to **every** page, same as style. |
+| `style` | string | no | Art rendering style, e.g. `storybook illustration`. Applied to **every** page. Defaults to plain clean line art if omitted. |
+| `page_count` | int | no (default `100`) | **Total physical pages** in the PDF — must be even (each unique design pairs with a blank page). 2-300. `page_count=100` → 50 unique designs. |
+| `trim_size` | string | no (default `8.5x11`) | One of `8.25x11`, `8.5x11`, `6x9`, `5.5x8.5` |
 
-Streams the finished PDF.
+Returns `202 { "job_id": "..." }` immediately; generation runs as a
+background job (a 100-page book takes several minutes — this is not a
+single request/response).
+
+```bash
+curl https://coloringbook.srv1213330.hstgr.cloud/api/jobs \
+  -F topic="forest animals" \
+  -F theme="whimsical enchanted woodland" \
+  -F style="storybook illustration" \
+  -F keyword="relaxing coloring for adults" \
+  -F title="Enchanted Forest Friends" \
+  -F page_count=100 \
+  -F trim_size=8.5x11
+# => {"job_id": "8d1cb6dd1ae4"}
+```
+
+### `GET /api/jobs/<job_id>` — poll status
+
+Returns the full job record: `status` (`queued` → `planning` → `generating`
+→ `assembling` → `done`/`error`), `completed`/`total` (designs finished so
+far, for a progress bar), `thumbnail_urls` (grows as each design finishes),
+and — once `status` is `done` — `download_url`.
+
+```bash
+curl https://coloringbook.srv1213330.hstgr.cloud/api/jobs/8d1cb6dd1ae4
+```
+
+```json
+{
+  "status": "done",
+  "completed": 50,
+  "total": 50,
+  "page_count": 100,
+  "title": "Enchanted Forest Friends",
+  "download_url": "/api/jobs/8d1cb6dd1ae4/download"
+}
+```
+
+### `GET /api/jobs/<job_id>/download` — get the PDF
+
+Streams the finished interior PDF, named from the title (or topic if no
+title was set).
+
+### `GET /api/jobs/<job_id>/thumb/<filename>` — preview a single page
+
+Serves one design's PNG thumbnail (as listed in `thumbnail_urls`).
+
+### Typical n8n flow
+
+1. **HTTP Request** node → `POST /api/jobs` with your topic/theme/style/etc.
+   as form-data → grab `job_id` from the response.
+2. **Wait** node (e.g. 30s) → **HTTP Request** node → `GET /api/jobs/{{job_id}}`
+   → **If** node checking `status == "done"` (loop back to Wait if not, stop
+   on `error`).
+3. Once done, **HTTP Request** node → `GET /api/jobs/{{job_id}}/download`
+   (set "Response Format" to file) to pull the finished PDF into the rest of
+   your workflow.
 
 ---
 
