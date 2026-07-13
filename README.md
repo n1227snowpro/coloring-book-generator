@@ -110,10 +110,12 @@ curl -F topic="forest animals" -F theme="whimsical enchanted woodland" \
 | `style` | string | no | Art rendering style, e.g. `storybook illustration`. Applied to **every** page. Defaults to plain clean line art if omitted. |
 | `page_count` | int | no (default `100`) | **Total physical pages** in the PDF — must be even (each unique design pairs with a blank page). 2-300. `page_count=100` → 50 unique designs. |
 | `trim_size` | string | no (default `8.5x11`) | One of `8.25x11`, `8.5x11`, `6x9`, `5.5x8.5` |
+| `task_id` | string | no | Your own id for this book. If set, the server **POSTs the result to a callback URL** when the job finishes (see below) instead of (in addition to) you having to poll. Echoed back in the `202` response and in every `GET /api/jobs/<id>`. |
+| `callback_url` | string | no | Where to POST the result. Defaults to the server's `CALLBACK_URL` env var if omitted — only need to pass this if you want a different callback than the configured default. |
 
-Returns `202 { "job_id": "..." }` immediately; generation runs as a
-background job (a 100-page book takes several minutes — this is not a
-single request/response).
+Returns `202 { "job_id": "...", "task_id": "..." }` immediately; generation
+runs as a background job (a 100-page book takes several minutes — this is
+not a single request/response).
 
 ```bash
 curl https://coloringbook.srv1213330.hstgr.cloud/api/jobs \
@@ -123,9 +125,25 @@ curl https://coloringbook.srv1213330.hstgr.cloud/api/jobs \
   -F keyword="relaxing coloring for adults" \
   -F title="Enchanted Forest Friends" \
   -F page_count=100 \
-  -F trim_size=8.5x11
-# => {"job_id": "8d1cb6dd1ae4"}
+  -F trim_size=8.5x11 \
+  -F task_id="book-row-42"
+# => {"job_id": "8d1cb6dd1ae4", "task_id": "book-row-42"}
 ```
+
+#### Callback (webhook) instead of polling
+
+When a job created with `task_id` finishes, the server POSTs the result to
+`callback_url` (or the `CALLBACK_URL` env default) as `application/json`:
+
+- Success: `{"task_id": "book-row-42", "pdf_url": "https://coloringbook.srv1213330.hstgr.cloud/api/jobs/8d1cb6dd1ae4/download"}`
+- Failure: `{"task_id": "book-row-42", "error": "<reason>"}`
+
+`pdf_url` is built from the `PUBLIC_BASE_URL` env var — it must be set for
+callbacks to carry a usable URL (defaults to
+`https://coloringbook.srv1213330.hstgr.cloud` in `docker-compose.yml`; set
+it explicitly in `.env` for any other deployment). The callback POST is
+best-effort — a delivery failure is logged but does not fail the job or get
+retried; poll `GET /api/jobs/<id>` as a fallback if you need certainty.
 
 ### `GET /api/jobs/<job_id>` — poll status
 

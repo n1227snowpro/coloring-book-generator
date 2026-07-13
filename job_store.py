@@ -23,6 +23,8 @@ SCHEMA = """
         title TEXT NOT NULL DEFAULT '',
         page_count INTEGER NOT NULL,
         trim_size TEXT NOT NULL,
+        task_id TEXT NOT NULL DEFAULT '',
+        callback_url TEXT NOT NULL DEFAULT '',
         status TEXT NOT NULL DEFAULT 'queued',
         completed INTEGER NOT NULL DEFAULT 0,
         total INTEGER NOT NULL,
@@ -47,19 +49,26 @@ class JobStore:
                 # num_designs/page_size). Only ever held disposable smoke-test jobs.
                 conn.execute("DROP TABLE jobs")
                 conn.execute(SCHEMA)
+            else:
+                for col in ("task_id", "callback_url"):
+                    if col not in cols:
+                        conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
             conn.commit()
 
-    def create_job(self, topic, page_count, trim_size, theme="", style="", keyword="", title=""):
+    def create_job(
+        self, topic, page_count, trim_size, theme="", style="", keyword="", title="",
+        task_id="", callback_url="",
+    ):
         job_id = uuid.uuid4().hex[:12]
         design_count = page_count // 2
         with _connect(self.db_path) as conn:
             conn.execute(
                 """INSERT INTO jobs
                    (id, topic, theme, style, keyword, title, page_count, trim_size,
-                    status, total, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)""",
+                    task_id, callback_url, status, total, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)""",
                 (job_id, topic, theme, style, keyword, title, page_count, trim_size,
-                 design_count, time.time()),
+                 task_id, callback_url, design_count, time.time()),
             )
             conn.commit()
         return job_id

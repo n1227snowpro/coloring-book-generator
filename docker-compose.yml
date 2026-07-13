@@ -14,6 +14,8 @@ services:
       GEMINI_TEXT_MODEL: ${GEMINI_TEXT_MODEL:-gemini-2.5-flash}
       GEMINI_IMAGE_MODEL: ${GEMINI_IMAGE_MODEL:-gemini-3.1-flash-image}
       API_KEY: ${API_KEY:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://coloringbook.srv1213330.hstgr.cloud}
+      CALLBACK_URL: ${CALLBACK_URL:-}
     labels:
       - traefik.enable=true
       - traefik.http.routers.coloringbook.rule=Host(`coloringbook.srv1213330.hstgr.cloud`)

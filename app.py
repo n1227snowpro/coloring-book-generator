@@ -17,6 +17,7 @@ import threading
 import traceback
 from pathlib import Path
 
+import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request, send_file, send_from_directory
 
@@ -45,12 +46,31 @@ store = JobStore(DB_PATH)
 API_KEY = os.environ.get("API_KEY", "")
 MAX_PAGE_COUNT = 300  # 150 unique designs, matches KDP's supported page range
 
+DEFAULT_CALLBACK_URL = os.environ.get("CALLBACK_URL", "")
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+
 
 def _check_api_key():
     if not API_KEY:
         return True
     supplied = request.headers.get("X-API-Key", "")
     return hmac.compare_digest(supplied, API_KEY)
+
+
+def _send_callback(callback_url, task_id, pdf_url=None, error=None):
+    """POST the result to an external caller's webhook once a job finishes.
+    Best-effort: failures are logged, never raised (must not break the job)."""
+    if not callback_url or not task_id:
+        return
+    payload = {"task_id": task_id}
+    if error:
+        payload["error"] = error
+    else:
+        payload["pdf_url"] = pdf_url
+    try:
+        requests.post(callback_url, json=payload, timeout=15)
+    except Exception:
+        traceback.print_exc()
 
 
 def _run_job(job_id):
@@ -95,9 +115,15 @@ def _run_job(job_id):
         )
 
         store.update_job(job_id, status="done", output_path=str(output_path))
+
+        if job["task_id"]:
+            pdf_url = f"{PUBLIC_BASE_URL}/api/jobs/{job_id}/download" if PUBLIC_BASE_URL else None
+            _send_callback(job["callback_url"], job["task_id"], pdf_url=pdf_url)
     except Exception as e:
         traceback.print_exc()
         store.update_job(job_id, status="error", error=str(e))
+        if job["task_id"]:
+            _send_callback(job["callback_url"], job["task_id"], error=str(e))
 
 
 @app.route("/")
@@ -153,12 +179,16 @@ def create_job():
     if trim_size not in PAGE_SIZES:
         return jsonify({"error": f"trim_size must be one of {list(PAGE_SIZES.keys())}"}), 400
 
+    task_id = (request.form.get("task_id") or "").strip()
+    callback_url = (request.form.get("callback_url") or "").strip() or DEFAULT_CALLBACK_URL
+
     job_id = store.create_job(
-        topic, page_count, trim_size, theme=theme, style=style, keyword=keyword, title=title
+        topic, page_count, trim_size, theme=theme, style=style, keyword=keyword, title=title,
+        task_id=task_id, callback_url=callback_url,
     )
     threading.Thread(target=_run_job, args=(job_id,), daemon=True).start()
 
-    return jsonify({"job_id": job_id}), 202
+    return jsonify({"job_id": job_id, "task_id": task_id}), 202
 
 
 @app.route("/api/jobs/<job_id>", methods=["GET"])
