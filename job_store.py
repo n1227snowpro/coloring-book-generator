@@ -4,7 +4,6 @@ import json
 import sqlite3
 import time
 import uuid
-from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -14,41 +13,53 @@ def _connect(db_path):
     return conn
 
 
+SCHEMA = """
+    CREATE TABLE jobs (
+        id TEXT PRIMARY KEY,
+        topic TEXT NOT NULL,
+        theme TEXT NOT NULL DEFAULT '',
+        style TEXT NOT NULL DEFAULT '',
+        keyword TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        page_count INTEGER NOT NULL,
+        trim_size TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        completed INTEGER NOT NULL DEFAULT 0,
+        total INTEGER NOT NULL,
+        thumbnails TEXT NOT NULL DEFAULT '[]',
+        output_path TEXT,
+        error TEXT,
+        created_at REAL NOT NULL
+    )
+"""
+
+
 class JobStore:
     def __init__(self, db_path):
         self.db_path = str(db_path)
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         with _connect(self.db_path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS jobs (
-                    id TEXT PRIMARY KEY,
-                    theme TEXT NOT NULL,
-                    style TEXT NOT NULL DEFAULT '',
-                    num_designs INTEGER NOT NULL,
-                    page_size TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'queued',
-                    completed INTEGER NOT NULL DEFAULT 0,
-                    total INTEGER NOT NULL,
-                    thumbnails TEXT NOT NULL DEFAULT '[]',
-                    output_path TEXT,
-                    error TEXT,
-                    created_at REAL NOT NULL
-                )
-                """
-            )
-            existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
-            if "style" not in existing_cols:
-                conn.execute("ALTER TABLE jobs ADD COLUMN style TEXT NOT NULL DEFAULT ''")
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(jobs)")}
+            if not cols:
+                conn.execute(SCHEMA)
+            elif "topic" not in cols:
+                # One-time migration from the pre-redesign schema (theme/style/
+                # num_designs/page_size). Only ever held disposable smoke-test jobs.
+                conn.execute("DROP TABLE jobs")
+                conn.execute(SCHEMA)
             conn.commit()
 
-    def create_job(self, theme, num_designs, page_size, style=""):
+    def create_job(self, topic, page_count, trim_size, theme="", style="", keyword="", title=""):
         job_id = uuid.uuid4().hex[:12]
+        design_count = page_count // 2
         with _connect(self.db_path) as conn:
             conn.execute(
-                """INSERT INTO jobs (id, theme, style, num_designs, page_size, status, total, created_at)
-                   VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)""",
-                (job_id, theme, style, num_designs, page_size, num_designs, time.time()),
+                """INSERT INTO jobs
+                   (id, topic, theme, style, keyword, title, page_count, trim_size,
+                    status, total, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)""",
+                (job_id, topic, theme, style, keyword, title, page_count, trim_size,
+                 design_count, time.time()),
             )
             conn.commit()
         return job_id

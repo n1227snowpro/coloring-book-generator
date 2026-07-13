@@ -25,6 +25,7 @@
   }
   label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; margin-top: 14px; }
   label:first-child { margin-top: 0; }
+  label .req { color: var(--red); }
   input[type=text], input[type=number], select, textarea {
     width: 100%; background: var(--surface2); border: 1px solid var(--border);
     color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 0.9rem;
@@ -32,7 +33,16 @@
   }
   .row { display: flex; gap: 16px; }
   .row > div { flex: 1; }
-  button {
+  .with-btn { display: flex; gap: 8px; align-items: stretch; }
+  .with-btn input { flex: 1; }
+  .btn-inline {
+    white-space: nowrap; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); padding: 0 14px; border-radius: 8px; font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .btn-inline:hover { border-color: var(--accent); }
+  .btn-inline:disabled { opacity: 0.5; cursor: not-allowed; }
+  button[type=submit] {
     margin-top: 20px; background: linear-gradient(135deg, var(--accent), var(--accent2));
     color: white; border: none; padding: 12px 20px; border-radius: 8px;
     font-size: 0.9rem; font-weight: 600; cursor: pointer; width: 100%;
@@ -46,44 +56,48 @@
   .thumbs img { width: 100%; border-radius: 4px; border: 1px solid var(--border); background: white; }
   .download-btn { display: none; text-align: center; text-decoration: none; }
   .error { color: var(--red); font-size: 0.85rem; margin-top: 10px; display: none; }
+  .hint { font-size: 0.75rem; color: var(--muted); margin-top: 4px; }
 </style>
 </head>
 <body>
 <main>
   <h1>🎨 Coloring Book Generator</h1>
-  <p class="sub">Generate a unique KDP-ready coloring book interior (line art only, no title/bonus pages) from a theme.</p>
+  <p class="sub">Generate a unique KDP-ready coloring book interior (line art only, no title/bonus pages) from a topic.</p>
 
   <div class="card">
     <form id="job-form">
-      <label for="theme">Theme</label>
-      <input type="text" id="theme" name="theme" placeholder="e.g. mandalas, ocean animals, flowers" required />
+      <label for="topic">Topic <span class="req">*</span></label>
+      <input type="text" id="topic" name="topic" placeholder="e.g. forest animals" required />
 
-      <label for="style">Style (optional)</label>
-      <textarea id="style" name="style" rows="2" placeholder="e.g. thick bold outlines, whimsical kawaii style, no fine detail — leave blank for default clean line art. Applied to every page so the book looks consistent."></textarea>
+      <label for="keyword">Keyword (optional)</label>
+      <input type="text" id="keyword" name="keyword" placeholder="e.g. relaxing coloring for adults" />
+
+      <label for="title">Title</label>
+      <div class="with-btn">
+        <input type="text" id="title" name="title" placeholder="Click Generate Title, or type your own" />
+        <button type="button" class="btn-inline" id="generate-title-btn">Generate Title</button>
+      </div>
+
+      <label for="theme">Theme</label>
+      <input type="text" id="theme" name="theme" placeholder="e.g. whimsical enchanted woodland" />
+
+      <label for="style">Style</label>
+      <textarea id="style" name="style" rows="2" placeholder="e.g. storybook illustration"></textarea>
+      <div class="hint">Theme and Style are applied to every page, so the whole book looks consistent.</div>
 
       <div class="row">
         <div>
-          <label for="num_designs">Unique designs</label>
-          <select id="num_designs" name="num_designs">
-            <option value="5">5 (10 pages) — test</option>
-            <option value="50" selected>50 (100 pages)</option>
-            <option value="100">100 (200 pages)</option>
-            <option value="custom">Custom…</option>
-          </select>
+          <label for="page_count">Page count</label>
+          <input type="number" id="page_count" name="page_count" min="2" max="300" step="2" value="100" />
         </div>
         <div>
-          <label for="page_size">Page size</label>
-          <select id="page_size" name="page_size">
+          <label for="trim_size">Trim size</label>
+          <select id="trim_size" name="trim_size">
             {% for size in page_sizes %}
             <option value="{{ size }}" {% if size == '8.5x11' %}selected{% endif %}>{{ size }} in</option>
             {% endfor %}
           </select>
         </div>
-      </div>
-
-      <div id="custom-count-wrap" style="display:none">
-        <label for="custom_count">Custom design count (1-150)</label>
-        <input type="number" id="custom_count" min="1" max="150" value="50" />
       </div>
 
       <button type="submit" id="generate-btn">Generate</button>
@@ -103,9 +117,12 @@
 
 <script>
 const form = document.getElementById('job-form');
-const numDesignsSel = document.getElementById('num_designs');
-const customWrap = document.getElementById('custom-count-wrap');
-const customCount = document.getElementById('custom_count');
+const topicInput = document.getElementById('topic');
+const keywordInput = document.getElementById('keyword');
+const titleInput = document.getElementById('title');
+const themeInput = document.getElementById('theme');
+const styleInput = document.getElementById('style');
+const generateTitleBtn = document.getElementById('generate-title-btn');
 const generateBtn = document.getElementById('generate-btn');
 const progressCard = document.getElementById('progress-card');
 const statusText = document.getElementById('status-text');
@@ -115,8 +132,31 @@ const downloadBtn = document.getElementById('download-btn');
 const downloadLink = document.getElementById('download-link');
 const errorBox = document.getElementById('error-box');
 
-numDesignsSel.addEventListener('change', () => {
-  customWrap.style.display = numDesignsSel.value === 'custom' ? 'block' : 'none';
+generateTitleBtn.addEventListener('click', async () => {
+  errorBox.style.display = 'none';
+  if (!topicInput.value.trim()) {
+    errorBox.textContent = 'Enter a topic first.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  generateTitleBtn.disabled = true;
+  generateTitleBtn.textContent = 'Generating…';
+  try {
+    const fd = new FormData();
+    fd.append('topic', topicInput.value);
+    fd.append('theme', themeInput.value);
+    fd.append('keyword', keywordInput.value);
+    const res = await fetch('/api/title', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to generate title');
+    titleInput.value = data.title;
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+  } finally {
+    generateTitleBtn.disabled = false;
+    generateTitleBtn.textContent = 'Generate Title';
+  }
 });
 
 let pollTimer = null;
@@ -133,12 +173,14 @@ form.addEventListener('submit', async (e) => {
   statusText.textContent = 'Queued…';
   progressBar.style.width = '0%';
 
-  const numDesigns = numDesignsSel.value === 'custom' ? customCount.value : numDesignsSel.value;
   const fd = new FormData();
-  fd.append('theme', document.getElementById('theme').value);
-  fd.append('style', document.getElementById('style').value);
-  fd.append('num_designs', numDesigns);
-  fd.append('page_size', document.getElementById('page_size').value);
+  fd.append('topic', topicInput.value);
+  fd.append('keyword', keywordInput.value);
+  fd.append('title', titleInput.value);
+  fd.append('theme', themeInput.value);
+  fd.append('style', styleInput.value);
+  fd.append('page_count', document.getElementById('page_count').value);
+  fd.append('trim_size', document.getElementById('trim_size').value);
 
   try {
     const res = await fetch('/api/jobs', { method: 'POST', body: fd });
@@ -161,6 +203,7 @@ function pollJob(jobId) {
     const pct = job.total ? Math.round((job.completed / job.total) * 100) : 0;
     progressBar.style.width = pct + '%';
     statusText.textContent = `${job.status} — ${job.completed} / ${job.total} designs`;
+    if (job.title && !titleInput.value) titleInput.value = job.title;
 
     (job.thumbnail_urls || []).forEach(url => {
       if (!seenThumbs.has(url)) {

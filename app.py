@@ -2,7 +2,7 @@
 """
 AI Coloring Book Generator — Web UI + REST API backend.
 
-Generates unique black-and-white coloring-book page designs from a theme via
+Generates unique black-and-white coloring-book page designs from a topic via
 the Gemini API and assembles them into a KDP-ready interior PDF (no title or
 bonus pages — just the alternating [design, blank] content pages).
 
@@ -12,6 +12,7 @@ Cloud:        gunicorn app:app --workers 1 --threads 4 --timeout 300
 
 import hmac
 import os
+import re
 import threading
 import traceback
 from pathlib import Path
@@ -42,7 +43,7 @@ app = Flask(__name__)
 store = JobStore(DB_PATH)
 
 API_KEY = os.environ.get("API_KEY", "")
-MAX_DESIGNS = 150
+MAX_PAGE_COUNT = 300  # 150 unique designs, matches KDP's supported page range
 
 
 def _check_api_key():
@@ -62,18 +63,25 @@ def _run_job(job_id):
     try:
         store.update_job(job_id, status="planning")
         generator = ColoringPageGenerator()
-        phrases = generator.generate_variations(job["theme"], job["num_designs"])
+
+        title = job["title"]
+        if not title:
+            title = generator.generate_title(job["topic"], theme=job["theme"], keyword=job["keyword"])
+            store.update_job(job_id, title=title)
+
+        design_count = job["page_count"] // 2
+        phrases = generator.generate_variations(job["topic"], design_count, theme=job["theme"])
 
         store.update_job(job_id, status="generating")
-        aspect_ratio = closest_aspect_ratio(job["page_size"])
-        style = job["style"]
+        aspect_ratio = closest_aspect_ratio(job["trim_size"])
+        theme, style = job["theme"], job["style"]
         design_images = []
         for i, phrase in enumerate(phrases):
             try:
-                image = generator.generate_image(phrase, style=style, aspect_ratio=aspect_ratio)
+                image = generator.generate_image(phrase, theme=theme, style=style, aspect_ratio=aspect_ratio)
             except GenerationError:
-                fresh_phrase = generator.generate_single_variation(job["theme"], phrases[: i + 1])
-                image = generator.generate_image(fresh_phrase, style=style, aspect_ratio=aspect_ratio)
+                fresh_phrase = generator.generate_single_variation(job["topic"], phrases[: i + 1], theme=theme)
+                image = generator.generate_image(fresh_phrase, theme=theme, style=style, aspect_ratio=aspect_ratio)
 
             thumb_name = f"{i:03d}.png"
             image.convert("RGB").save(job_thumbs_dir / thumb_name)
@@ -82,7 +90,9 @@ def _run_job(job_id):
 
         store.update_job(job_id, status="assembling")
         output_path = OUTPUT_DIR / f"{job_id}.pdf"
-        build_interior_pdf(design_images, job["page_size"], str(output_path))
+        build_interior_pdf(
+            design_images, job["trim_size"], str(output_path), title=title, keywords=job["keyword"]
+        )
 
         store.update_job(job_id, status="done", output_path=str(output_path))
     except Exception as e:
@@ -95,29 +105,57 @@ def index():
     return render_template("index.html", page_sizes=list(PAGE_SIZES.keys()))
 
 
+@app.route("/api/title", methods=["POST"])
+def generate_title():
+    """Quick synchronous helper for the "Generate Title" button — no job created."""
+    if not _check_api_key():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    topic = (request.form.get("topic") or "").strip()
+    if not topic:
+        return jsonify({"error": "topic is required"}), 400
+    theme = (request.form.get("theme") or "").strip()
+    keyword = (request.form.get("keyword") or "").strip()
+
+    try:
+        generator = ColoringPageGenerator()
+    except GenerationError as e:
+        return jsonify({"error": str(e)}), 500
+
+    title = generator.generate_title(topic, theme=theme, keyword=keyword)
+    return jsonify({"title": title})
+
+
 @app.route("/api/jobs", methods=["POST"])
 def create_job():
     if not _check_api_key():
         return jsonify({"error": "Unauthorized"}), 401
 
-    theme = (request.form.get("theme") or "").strip()
-    if not theme:
-        return jsonify({"error": "theme is required"}), 400
+    topic = (request.form.get("topic") or "").strip()
+    if not topic:
+        return jsonify({"error": "topic is required"}), 400
 
+    theme = (request.form.get("theme") or "").strip()
     style = (request.form.get("style") or "").strip()
+    keyword = (request.form.get("keyword") or "").strip()
+    title = (request.form.get("title") or "").strip()
 
     try:
-        num_designs = int(request.form.get("num_designs", 50))
+        page_count = int(request.form.get("page_count", 100))
     except ValueError:
-        return jsonify({"error": "num_designs must be an integer"}), 400
-    if num_designs < 1 or num_designs > MAX_DESIGNS:
-        return jsonify({"error": f"num_designs must be between 1 and {MAX_DESIGNS}"}), 400
+        return jsonify({"error": "page_count must be an integer"}), 400
+    if page_count % 2 != 0:
+        return jsonify({"error": "page_count must be even (each design pairs with a blank page)"}), 400
+    if page_count < 2 or page_count > MAX_PAGE_COUNT:
+        return jsonify({"error": f"page_count must be between 2 and {MAX_PAGE_COUNT}"}), 400
 
-    page_size = request.form.get("page_size", "8.5x11")
-    if page_size not in PAGE_SIZES:
-        return jsonify({"error": f"page_size must be one of {list(PAGE_SIZES.keys())}"}), 400
+    trim_size = request.form.get("trim_size", "8.5x11")
+    if trim_size not in PAGE_SIZES:
+        return jsonify({"error": f"trim_size must be one of {list(PAGE_SIZES.keys())}"}), 400
 
-    job_id = store.create_job(theme, num_designs, page_size, style=style)
+    job_id = store.create_job(
+        topic, page_count, trim_size, theme=theme, style=style, keyword=keyword, title=title
+    )
     threading.Thread(target=_run_job, args=(job_id,), daemon=True).start()
 
     return jsonify({"job_id": job_id}), 202
@@ -146,11 +184,13 @@ def download_job(job_id):
     job = store.get_job(job_id)
     if job is None or job["status"] != "done" or not job["output_path"]:
         return jsonify({"error": "Job not ready"}), 404
+    name_source = job["title"] or job["topic"]
+    safe_name = re.sub(r"[^\w\-]+", "_", name_source).strip("_") or "coloring_book"
     return send_file(
         job["output_path"],
         mimetype="application/pdf",
         as_attachment=True,
-        download_name=f"{job['theme'].replace(' ', '_')}_coloring_book.pdf",
+        download_name=f"{safe_name}.pdf",
     )
 
 

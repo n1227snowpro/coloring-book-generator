@@ -1,4 +1,10 @@
-"""Gemini-backed generation: theme -> unique prompt variations -> line-art images."""
+"""Gemini-backed generation: topic -> unique prompt variations -> line-art images.
+
+Three separate knobs, each applied consistently across every page:
+  topic - the subject matter (e.g. "forest animals")
+  theme - the mood/setting (e.g. "whimsical enchanted woodland")
+  style - the art rendering style (e.g. "storybook illustration")
+"""
 
 import io
 import os
@@ -14,7 +20,7 @@ DEFAULT_STYLE = (
 )
 
 STYLE_TEMPLATE = (
-    "Black and white line art coloring book page, {subject}. "
+    "Black and white line art coloring book page, {subject}{theme_clause}. "
     "{style} "
     "Pure white background, no color, no text or lettering, print-ready, "
     "centered composition, suitable for an adult coloring book."
@@ -34,15 +40,35 @@ class ColoringPageGenerator:
         self.text_model = text_model or os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
         self.image_model = image_model or os.environ.get("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image")
 
-    def generate_variations(self, theme, n):
-        """Return a list of n distinct short subject phrases for the given theme."""
+    def generate_title(self, topic, theme="", keyword=""):
+        """Suggest a short, KDP-friendly book title."""
+        context = [f"topic: {topic}"]
+        if theme:
+            context.append(f"theme/setting: {theme}")
+        if keyword:
+            context.append(f"target audience / keyword: {keyword}")
+        prompt = (
+            "Suggest one short, catchy, KDP-friendly coloring book title (5-9 words) "
+            f"for a book with {'; '.join(context)}. "
+            "Reply with only the title text, no quotes, no extra commentary."
+        )
+        try:
+            response = self.client.models.generate_content(model=self.text_model, contents=prompt)
+            title = (response.text or "").strip().splitlines()[0].strip().strip('"')
+            return title or f"{topic.title()} Coloring Book"
+        except Exception:
+            return f"{topic.title()} Coloring Book"
+
+    def generate_variations(self, topic, n, theme=""):
+        """Return a list of n distinct short subject phrases for the given topic."""
+        theme_clause = f", set within a '{theme}' theme/setting" if theme else ""
         prompt = (
             f"Generate exactly {n} distinct, short (3-8 word) subject descriptions for "
-            f"coloring-book page designs on the theme '{theme}'. Each must describe a "
-            "visually different composition (different layout, pattern, or focal subject) "
-            "so no two are alike. Family-friendly, no text or words in the design. "
-            f"Reply with exactly {n} lines, one description per line, numbered 1. 2. 3. etc. "
-            "No extra commentary."
+            f"coloring-book page designs on the topic '{topic}'{theme_clause}. Each must "
+            "describe a visually different composition (different layout, pattern, or "
+            "focal subject) so no two are alike. Family-friendly, no text or words in the "
+            f"design. Reply with exactly {n} lines, one description per line, numbered "
+            "1. 2. 3. etc. No extra commentary."
         )
         phrases = []
         try:
@@ -75,28 +101,32 @@ class ColoringPageGenerator:
         i = len(phrases)
         while len(phrases) < n:
             i += 1
-            phrases.append(f"{theme} design variation {i}")
+            phrases.append(f"{topic} design variation {i}")
 
         return phrases[:n]
 
-    def generate_single_variation(self, theme, existing_phrases):
+    def generate_single_variation(self, topic, existing_phrases, theme=""):
         """Ask for one more fresh phrase, avoiding repeats of existing_phrases."""
         avoid = "; ".join(existing_phrases[-20:])
+        theme_clause = f", within a '{theme}' theme/setting" if theme else ""
         prompt = (
             f"Give one short (3-8 word) subject description for a coloring-book page on "
-            f"the theme '{theme}', different from these already used: {avoid}. "
+            f"the topic '{topic}'{theme_clause}, different from these already used: {avoid}. "
             "Reply with only the description, no numbering, no extra text."
         )
         try:
             response = self.client.models.generate_content(model=self.text_model, contents=prompt)
             phrase = (response.text or "").strip().splitlines()[0].strip()
-            return phrase or f"{theme} design variation {len(existing_phrases) + 1}"
+            return phrase or f"{topic} design variation {len(existing_phrases) + 1}"
         except Exception:
-            return f"{theme} design variation {len(existing_phrases) + 1}"
+            return f"{topic} design variation {len(existing_phrases) + 1}"
 
-    def generate_image(self, subject, style=None, aspect_ratio="3:4", retries=3):
+    def generate_image(self, subject, theme="", style=None, aspect_ratio="3:4", retries=3):
         """Generate one coloring-page image for the given subject phrase. Returns a PIL.Image."""
-        prompt = STYLE_TEMPLATE.format(subject=subject, style=(style or DEFAULT_STYLE).strip())
+        theme_clause = f", set in a {theme} atmosphere" if theme else ""
+        prompt = STYLE_TEMPLATE.format(
+            subject=subject, theme_clause=theme_clause, style=(style or DEFAULT_STYLE).strip()
+        )
         last_err = None
         for attempt in range(1, retries + 1):
             try:

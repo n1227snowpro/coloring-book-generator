@@ -40,10 +40,10 @@ def gutter_margin_in(total_pages):
 SUPPORTED_ASPECT_RATIOS = ["1:1", "3:2", "2:3", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
 
 
-def closest_aspect_ratio(page_size_key):
+def closest_aspect_ratio(trim_size_key):
     """Pick the supported image aspect ratio closest to the page's own ratio,
     so generated art fills the page instead of leaving big blank margins."""
-    w_in, h_in = PAGE_SIZES.get(page_size_key, PAGE_SIZES["8.5x11"])
+    w_in, h_in = PAGE_SIZES.get(trim_size_key, PAGE_SIZES["8.5x11"])
     target = w_in / h_in
     best = min(
         SUPPORTED_ASPECT_RATIOS,
@@ -52,11 +52,13 @@ def closest_aspect_ratio(page_size_key):
     return best
 
 
-def build_interior_pdf(design_images, page_size_key, output_path):
+def build_interior_pdf(design_images, trim_size_key, output_path, title=None, keywords=None):
     """design_images: list of PIL.Image (one per unique design).
     Writes a PDF with [design, blank] pairs for every design, no front/back matter.
+    title/keywords (optional) are written as PDF document metadata only — never
+    rendered on a page.
     """
-    w_in, h_in = PAGE_SIZES.get(page_size_key, PAGE_SIZES["8.5x11"])
+    w_in, h_in = PAGE_SIZES.get(trim_size_key, PAGE_SIZES["8.5x11"])
     page_w = round(w_in * DPI)
     page_h = round(h_in * DPI)
 
@@ -80,7 +82,13 @@ def build_interior_pdf(design_images, page_size_key, output_path):
         raise ValueError("No design images to assemble")
 
     first, rest = pages[0], pages[1:]
-    first.save(output_path, format="PDF", save_all=True, append_images=rest, resolution=DPI)
+    save_kwargs = {"format": "PDF", "save_all": True, "append_images": rest, "resolution": DPI}
+    if title:
+        save_kwargs["title"] = title
+    if keywords:
+        save_kwargs["keywords"] = keywords
+
+    first.save(output_path, **save_kwargs)
 
 
 def _build_design_page(design, page_w, page_h, margins_px):
